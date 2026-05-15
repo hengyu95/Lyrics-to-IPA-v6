@@ -31,8 +31,14 @@ jobs:
         python -m pip install --upgrade pip
         pip install pyinstaller PyQt5 eng_to_ipa svgwrite
 
-    - name: Build with PyInstaller
-      run: pyinstaller LyricsToIPA.spec
+    - name: Build on Windows
+      if: matrix.os == 'windows-latest'
+      run: pyinstaller --onefile --windowed --collect-data eng_to_ipa --collect-submodules PyQt5.QtMultimedia --add-data "Audio;Audio" --hidden-import svgwrite LyricsToIPA.py
+
+    - name: Build on Mac
+      if: matrix.os == 'macos-latest'
+      # Notice the colon (:) in Audio:Audio
+      run: pyinstaller --onefile --windowed --collect-data eng_to_ipa --collect-submodules PyQt5.QtMultimedia --add-data "Audio:Audio" --hidden-import svgwrite LyricsToIPA.py
 
     - name: Zip Mac App
       if: matrix.os == 'macos-latest'
