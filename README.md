@@ -38,6 +38,8 @@ sudo apt install espeak-ng
 
 **Inline hints** appear as background-tinted highlights on words with diction notes. Hover any highlighted word for the tip text. Eight categories, all individually toggleable:
 
+**Disclaimer: All of these tips are suggested by LLMs, and I have no way of verifying their quality as a newbie singer. Just take what's useful for you and drop what's not. Check with your teachers!**
+
 | Colour | Hint type | What it flags |
 |---|---|---|
 | Amber | Legato link | Consonant-to-vowel boundary — carry the consonant across |
@@ -75,7 +77,7 @@ Three automatic warnings appear below the bar when triggered:
 
 ### Analysis Panel (right panel)
 
-**Word label + ▶ Speak** — the Speak button reads the word aloud using the *currently selected pronunciation*, not the default dictionary form. On Windows this uses SAPI SSML with IPA phoneme input, so custom pronunciations like Valjean's are rendered accurately. On macOS it uses `say`, on Linux `espeak-ng`.
+**Word label + ▶ Speak** — the Speak button reads the word aloud using the *currently selected pronunciation*. On Windows this uses SAPI SSML with IPA phoneme input, so custom pronunciations like Valjean's are rendered accurately. On macOS it uses `say`, on Linux `espeak-ng`.
 
 **PRONUNCIATIONS** — when a word has multiple valid pronunciations, each is shown with a brightness tag (brighter/darker) and a coloured left border. Click to select. Your preferred pronunciation is remembered per song and persists to the save file.
 
@@ -97,6 +99,8 @@ Three automatic warnings appear below the bar when triggered:
 ### Consonant intelligence
 
 The app understands diction rules at word boundaries, not just within words:
+
+**Disclaimer: All of these tips are suggested by LLMs, and I have no way of verifying their quality as a newbie singer. Just take what's useful for you and drop what's not. Check with your teachers!**
 
 | Situation | Detection | Advice |
 |---|---|---|
@@ -125,7 +129,7 @@ Songs are stored as named save slots in a local JSON file. Each song remembers:
 
 **Song → Bulk Import IPAs…** — paste a JSON object to import many overrides at once:
 ```json
-{"valjean": "valʒɑ̃", "cosette": "kɔzɛt"s}
+{"valjean": "valʒɑ̃", "cosette": "kɔzɛt"}
 ```
 
 **Song → Generate IPA Prompt to Clipboard** — scans the lyrics for unrecognized words and builds a prompt ready to paste to an AI, which returns JSON you can bulk-import.
@@ -145,16 +149,7 @@ Both settings apply immediately and persist for the session. On 4K displays the 
 
 ## Audio
 
-Place `.mp3` files named by IPA symbol in an `Audio/` folder next to the script (e.g. `Audio/ɛ.mp3`, `Audio/eɪ.mp3`). The **▶ Play vowel sound** button plays the selected vowel. R-colored vowels /ɚ/ and /ɝ/ fall back to /ə/ and /ɜ/ if their own files are absent.
-
----
-
-## Keyboard shortcut ideas (not yet implemented)
-
-- Next word in line → `Tab`
-- Previous word → `Shift+Tab`
-- Cycle pronunciation → `Alt+↑/↓`
-- Speak word → `Alt+S`
+The **▶ Play vowel sound** button plays the selected vowel. R-colored vowels /ɚ/ and /ɝ/ fall back to /ə/ and /ɜ/ if their own files are absent.
 
 ---
 
