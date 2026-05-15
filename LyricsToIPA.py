@@ -21,6 +21,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from io import StringIO
 from os import path
@@ -404,46 +405,71 @@ def brightness_color(b: float) -> QColor:
 
 
 def _tts_speak(word: str, ipa_pron: str = '') -> None:
-    """Speak *word* via system TTS, using *ipa_pron* where the platform
-    supports IPA phoneme input (Windows SAPI SSML).
+    """Speak *word* via system TTS, using *ipa_pron* where supported.
+
+    Windows: writes SSML to a UTF-8 temp file and passes the path to
+    PowerShell SAPI — this avoids every inline escaping problem with
+    non-ASCII IPA characters.
+    macOS: `say` (no IPA support; speaks the word).
+    Linux: `espeak-ng` then `espeak` fallback.
     Non-blocking. Silently does nothing if TTS is unavailable.
     """
     try:
         if sys.platform == 'win32':
-            safe_word = word.replace('"', '').replace("'", '').replace('<', '').replace('>', '')
+            safe_word = word.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
             if ipa_pron:
-                # Strip IPA stress/length marks that SAPI doesn't handle well
-                safe_ipa = ipa_pron.replace('"', '').replace("'", '').replace('<', '').replace('>', '')
+                # XML-escape the IPA string for the ph attribute
+                safe_ipa = (ipa_pron
+                            .replace('&', '&amp;')
+                            .replace('"', '&quot;')
+                            .replace('<', '&lt;')
+                            .replace('>', '&gt;'))
                 ssml = (
+                    '<?xml version="1.0" encoding="UTF-8"?>\n'
                     '<speak version="1.0" '
-                    'xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">'
+                    'xmlns="http://www.w3.org/2001/10/synthesis" '
+                    'xml:lang="en-US">'
                     f'<phoneme alphabet="ipa" ph="{safe_ipa}">{safe_word}</phoneme>'
                     '</speak>'
                 )
-                ps_cmd = (
-                    'Add-Type -AssemblyName System.Speech; '
-                    '$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; '
-                    f'$s.SpeakSsml(\'{ssml.replace(chr(39), "")}\''
-                    ')'
-                )
             else:
-                ps_cmd = (
-                    'Add-Type -AssemblyName System.Speech; '
-                    f'(New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak("{safe_word}")'
+                ssml = (
+                    '<?xml version="1.0" encoding="UTF-8"?>\n'
+                    '<speak version="1.0" '
+                    'xmlns="http://www.w3.org/2001/10/synthesis" '
+                    f'xml:lang="en-US">{safe_word}</speak>'
                 )
+
+            # Write to a temp file so PowerShell reads it cleanly — no
+            # inline escaping of IPA/Unicode characters in the PS command.
+            tmp = tempfile.NamedTemporaryFile(
+                mode='w', suffix='.xml', delete=False, encoding='utf-8')
+            tmp.write(ssml)
+            tmp_path = tmp.name
+            tmp.close()
+
+            # Forward slashes work fine in PowerShell paths and avoid
+            # backslash escaping inside the double-quoted PS string.
+            ps_path = tmp_path.replace('\\', '/')
+            ps_cmd = (
+                'Add-Type -AssemblyName System.Speech; '
+                '$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; '
+                f'$s.SpeakSsml([System.IO.File]::ReadAllText("{ps_path}")); '
+                f'Remove-Item "{ps_path}"'
+            )
             subprocess.Popen(
                 ['powershell', '-WindowStyle', 'Hidden', '-Command', ps_cmd],
                 creationflags=0x08000000,
             )
+
         elif sys.platform == 'darwin':
-            # macOS `say` does not support IPA; speak the word as-is
             subprocess.Popen(['say', word])
+
         else:
-            # Linux: espeak-ng can speak the word; IPA input not reliable cross-version
             subprocess.Popen(['espeak-ng', '-v', 'en', word])
+
     except (OSError, FileNotFoundError):
         try:
-            # Fallback: plain espeak
             subprocess.Popen(['espeak', '-v', 'en', word])
         except (OSError, FileNotFoundError):
             pass
@@ -653,7 +679,8 @@ def dedupe_pronunciations(items):
 def get_pronunciations(word: str, custom_ipa: Optional[dict] = None):
     word_l = word.lower()
     if custom_ipa and word_l in custom_ipa:
-        return [custom_ipa[word_l]]
+        # Strip surrounding slashes in case the user stored them (e.g. /valʒɑ̃/)
+        return [custom_ipa[word_l].strip('/')]
     if word_l in FUNCTION_WORDS:
         return FUNCTION_WORDS[word_l].copy()
 
@@ -1988,6 +2015,8 @@ class AnalysisPanel(QWidget):
         ipa_pron = ''
         if self._pronunciations and self._current_pron_index < len(self._pronunciations):
             ipa_pron = self._pronunciations[self._current_pron_index]
+        # Strip surrounding slashes in case the user stored the IPA with them
+        ipa_pron = ipa_pron.strip('/')
         _tts_speak(self._current_word, ipa_pron)
 
     def _on_play(self):
@@ -2062,7 +2091,7 @@ class CustomIpaDialog(QDialog):
     def result_ipa(self):
         if self._reset_clicked:
             return ''
-        return self.edit.text().strip()
+        return self.edit.text().strip().strip('/')
 
 
 class SongSelectorBar(QWidget):
