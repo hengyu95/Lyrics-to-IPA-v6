@@ -39,10 +39,20 @@ jobs:
       # This uses the .spec file you generated earlier
       run: pyinstaller LyricsToIPA.spec
 
+    - name: Zip Mac App
+    # This step only runs on the Mac computer. It zips the .app folder into a single file.
+      if: matrix.os == 'macos-latest'
+      run: |
+          cd dist
+          zip -r LyricsToIPA-Mac.zip LyricsToIPA.app
+
     - name: Upload to GitHub Releases
       uses: softprops/action-gh-release@v1
       with:
-        # Grabs everything inside the dist folder to put on the release page
-        files: dist/* 
+        # Grabs the exe, the raw mac file, and the new Mac zip
+        files: |
+          dist/*.exe
+          dist/LyricsToIPA
+          dist/*.zip
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
