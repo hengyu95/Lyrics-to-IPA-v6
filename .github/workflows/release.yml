@@ -1,10 +1,13 @@
 name: Build and Release
 
-# This makes the action run ONLY when you push a tag like "v1.0.0"
 on:
   push:
     tags:
       - 'v*' 
+
+# ADD THIS BLOCK RIGHT HERE
+permissions:
+  contents: write
 
 jobs:
   build:
