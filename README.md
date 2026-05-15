@@ -1,6 +1,6 @@
 # Lyric IPA Finder
 
-A singing-focused vowel and diction coach for musical theatre and classical singers. Paste lyrics, click any word, and get immediate IPA breakdowns, vowel chart positioning, and articulation advice — all through a unified dark interface designed for extended practice sessions.
+A singing-focused vowel and diction coach for musical theatre and classical singers. Paste lyrics, click any word, and get immediate IPA breakdowns, vowel chart positioning, and articulation advice.
 
 ---
 
