@@ -125,7 +125,7 @@ Songs are stored as named save slots in a local JSON file. Each song remembers:
 
 **Song → Bulk Import IPAs…** — paste a JSON object to import many overrides at once:
 ```json
-{"valjean": "valʒɑ̃", "cosette": "kɔzɛt"}
+{"valjean": "valʒɑ̃", "cosette": "kɔzɛt"s}
 ```
 
 **Song → Generate IPA Prompt to Clipboard** — scans the lyrics for unrecognized words and builds a prompt ready to paste to an AI, which returns JSON you can bulk-import.
