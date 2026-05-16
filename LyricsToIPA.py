@@ -64,15 +64,31 @@ def _dpr() -> float:
     return 1.0
 
 
+
+# Module-level UI scale — updated by MainWindow when the user changes the setting.
+# Defaults to 1/DPR so a 4K screen gets a reasonable size before settings load.
+_UI_SCALE: float = 1.0  # will be overwritten by MainWindow.__init__
+
+
+def _apply_ui_scale(scale: float) -> None:
+    """Update the module-level _UI_SCALE used by _scale() / _scalef()."""
+    global _UI_SCALE
+    _UI_SCALE = max(0.1, scale)
+
+
 def _scale(value: float) -> int:
-    """Scale a logical pixel value by the device pixel ratio, rounded."""
-    return max(1, round(value * _dpr()))
+    """Scale a logical pixel value by the current UI scale factor.
+
+    Called for hard-coded widget sizes (setMinimumSize, setFixedHeight, …)
+    outside the QSS stylesheet.  ``_UI_SCALE`` is set by MainWindow on startup
+    and whenever the user adjusts View → Adjust UI Scale.
+    """
+    return max(1, round(value * _UI_SCALE))
 
 
 def _scalef(value: float) -> float:
-    """Floating-point scale (for font sizes in pt, which Qt already handles,
-    but useful when we need fractional precision)."""
-    return value * _dpr()
+    """Floating-point version of _scale."""
+    return value * _UI_SCALE
 
 
 # =============================================================================
@@ -1101,16 +1117,23 @@ class SongStore:
 # QSS theme — built dynamically so px values scale with DPI
 # =============================================================================
 
-def build_style(dpr: float, font_scale: float = 1.0) -> str:
-    """Return the full QSS stylesheet with px values scaled by dpr and
-    font sizes additionally scaled by font_scale.
+def build_style(dpr: float, ui_scale: float = 1.0) -> str:
+    """Return the full QSS stylesheet.
+
+    *dpr* is the device pixel ratio and is used only for sub-pixel-aware
+    rounding so hairlines stay crisp on HiDPI screens.
+    *ui_scale* is the user-controlled overall scale factor (0.4–2.0).
+    All logical sizes — borders, padding, font sizes, radii — are multiplied
+    by *ui_scale* so the whole layout shrinks or grows uniformly.
     """
 
     def px(n: float) -> str:
-        return f'{max(1, round(n * dpr))}px'
+        """Structural size (border, padding, radius, min-width …)."""
+        return f'{max(1, round(n * ui_scale))}px'
 
-    def fs(n: float) -> str:  # font size: dpr + ui font scale
-        return f'{max(1, round(n * dpr * font_scale))}px'
+    def fs(n: float) -> str:
+        """Font size — same scale factor as layout."""
+        return f'{max(1, round(n * ui_scale))}px'
 
     return f"""
 QMainWindow, QWidget {{
@@ -2437,7 +2460,13 @@ class MainWindow(QMainWindow):
         self._save_timer.timeout.connect(self._persist_songs)
 
         self._editor_font_size = 16
-        self._ui_font_scale = 1.0
+        # Seed UI scale from DPR so a 4K/HiDPI screen gets a sane first-run size.
+        # The user can adjust from View → Adjust UI Scale.
+        dpr_default = _dpr()
+        self._ui_scale: float = 1.0 / dpr_default if dpr_default > 1.0 else 1.0
+        # Push into the module-level var so _scale() / _scalef() work during
+        # widget construction inside _init_ui() below.
+        _apply_ui_scale(self._ui_scale)
         self._annotations_enabled = True
         self._enabled_hint_types = {'legato','vowel_glide','crash','r_toxicity','dark_l','glottal','plosive','nasal','approx','fricative','yod','ng_release','diphthong','aspiration'}
         self._word_annotations = []
@@ -2452,7 +2481,7 @@ class MainWindow(QMainWindow):
 
     def _init_ui(self):
         self.setWindowTitle('Lyric IPA Finder')
-        self.setStyleSheet(build_style(_dpr(), self._ui_font_scale))
+        self.setStyleSheet(build_style(_dpr(), self._ui_scale))
 
         self.song_bar = SongSelectorBar()
         self.song_bar.song_changed.connect(self._on_song_changed)
@@ -2595,16 +2624,25 @@ class MainWindow(QMainWindow):
         )
 
     def _adjust_ui_scale(self):
-        """Let the user scale all UI text (labels, buttons, menus) as a
-        percentage of the default size.
+        """Let the user scale the whole UI (layout + fonts) as a percentage.
+
+        The range 25–200 % is relative to the logical base sizes defined in
+        build_style.  On a 4K / HiDPI screen the default is already divided by
+        the device-pixel-ratio so 100 % here equals a comfortable physical size.
+        Going below 50 % is unusual but available for very large displays or
+        unusual DPI situations.
         """
-        pct = round(self._ui_font_scale * 100)
+        pct = round(self._ui_scale * 100)
         new_pct, ok = QInputDialog.getInt(
-            self, 'UI Scale', 'UI font scale (%):',
-            value=pct, min=75, max=200, step=25)
+            self, 'UI Scale',
+            'UI scale (%):\n'
+            '100 % = comfortable default for this screen.\n'
+            'Lower values shrink the entire interface.',
+            value=pct, min=25, max=200, step=5)
         if ok:
-            self._ui_font_scale = new_pct / 100.0
-            self.setStyleSheet(build_style(_dpr(), self._ui_font_scale))
+            self._ui_scale = new_pct / 100.0
+            _apply_ui_scale(self._ui_scale)
+            self.setStyleSheet(build_style(_dpr(), self._ui_scale))
 
     def _adjust_font_size(self):
         new, ok = QInputDialog.getInt(
@@ -3422,10 +3460,17 @@ class MainWindow(QMainWindow):
         self._editor_font_size = int(
             self.settings.value('editorFontSize', self._editor_font_size))
         self._apply_editor_font()
-        # Persist UI scale
-        self._ui_font_scale = float(
-            self.settings.value('uiFontScale', self._ui_font_scale))
-        self.setStyleSheet(build_style(_dpr(), self._ui_font_scale))
+        # Persist UI scale — new key 'uiScale'; fall back to old 'uiFontScale'
+        # if the user has an existing settings file from before this fix.
+        if self.settings.contains('uiScale'):
+            self._ui_scale = float(self.settings.value('uiScale', self._ui_scale))
+        elif self.settings.contains('uiFontScale'):
+            # Old setting stored font-scale relative to full DPR — convert it.
+            old = float(self.settings.value('uiFontScale', 1.0))
+            self._ui_scale = old / _dpr() if _dpr() > 0 else old
+        # else keep the DPR-normalised default set in __init__
+        _apply_ui_scale(self._ui_scale)
+        self.setStyleSheet(build_style(_dpr(), self._ui_scale))
         # Persist enabled hint types
         saved_hints = self.settings.value('enabledHintTypes', None)
         if saved_hints is not None:
@@ -3612,7 +3657,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue('geometry', self.saveGeometry())
         self.settings.setValue('windowState', self.saveState())
         self.settings.setValue('editorFontSize', self._editor_font_size)
-        self.settings.setValue('uiFontScale', self._ui_font_scale)
+        self.settings.setValue('uiScale', self._ui_scale)
         self.settings.setValue('enabledHintTypes', list(self._enabled_hint_types))
         super().closeEvent(event)
 
