@@ -122,8 +122,9 @@ _V = [
           'œ'),
     Vowel('ɛ', 34,  200, False, 'open-mid front unrounded',
           'mid-low', 'front', 'neutral',
-          "A comfortable open-front vowel — usually doesn't need modification "
-          "unless very high, in which case it can open further toward /a/.",
+          "A comfortable open-front vowel. Stable across most of the range; "
+          "usually no modification needed. At extreme soprano pitches "
+          "some slight opening is acceptable but /ɛ/ itself carries well.",
           None),
     Vowel('œ', 34,  200, True,  'open-mid front rounded',
           'mid-low', 'front', 'rounded',
@@ -397,7 +398,7 @@ def brightness_color(b: float) -> QColor:
     else:
         t = b * 2
         r = int(60 + (106 - 60) * t)
-        g = int(96 + (96 - 96) * t)
+        g = int(80 + (96 - 80) * t)
         bb = int(168 + (120 - 168) * t)
     return QColor(r, g, bb)
 
@@ -577,16 +578,38 @@ def consonant_release_tip(consonants: list) -> str:
         s = ' '.join(f'/{c}/' for c in nasals)
         lines.append(f'Nasal exit ({s}) — carries pitch; sustain through it before releasing.')
     if approx:
-        s = ' '.join(f'/{c}/' for c in approx)
-        lines.append(f'Approximant exit ({s}) — gentle release; no hard cutoff needed.')
+        for c in approx:
+            if c == 'l':
+                lines.append('/l/ exit — keep the tongue tip on the alveolar ridge; '
+                             'do not pull the root back. Release the sides gently.')
+            elif c in ('w', 'j'):
+                lines.append(f'/{c}/ exit — a glide; let it vanish smoothly into '
+                             'silence without a hard stop.')
+            elif c in ('ɹ', 'r'):
+                lines.append('/ɹ/ exit — release the tongue curl before the note ends; '
+                             'de-rhotacize for classical/legit.')
+            else:
+                lines.append(f'/{c}/ exit — gentle release; no hard cutoff.')
     if fricatives:
-        s = ' '.join(f'/{c}/' for c in fricatives)
-        lines.append(f'Fricative exit ({s}) — control the airstream; brief sustain is possible.')
+        IPA_VOICED_FRIC = {'v', 'z', 'ʒ', 'ð'}
+        voiced_f   = [c for c in fricatives if c in IPA_VOICED_FRIC]
+        unvoiced_f = [c for c in fricatives if c not in IPA_VOICED_FRIC]
+        if voiced_f:
+            s = ' '.join(f'/{c}/' for c in voiced_f)
+            lines.append(f'Voiced fricative exit ({s}) — these carry pitch and can '
+                         f'be lengthened for expressive weight. Use them as a sustain resource.')
+        if unvoiced_f:
+            s = ' '.join(f'/{c}/' for c in unvoiced_f)
+            lines.append(f'Unvoiced fricative exit ({s}) — dumps air; keep it brief '
+                         f'and controlled. Do not linger.')
     return chr(10).join(lines)
 
 
 # R-colored consonant (trailing)
 IPA_RHOTIC = {'ɹ', 'r'}
+
+# Voiced fricatives — sustainable expressive resources
+IPA_VOICED_FRIC = {'v', 'z', 'ʒ', 'ð'}
 
 # Unvoiced consonants (vocal cords open → air dump)
 IPA_UNVOICED = {'p', 't', 'k', 'f', 's', 'ʃ', 'h', 'θ', 'tʃ'}
@@ -680,7 +703,7 @@ def get_pronunciations(word: str, custom_ipa: Optional[dict] = None):
     word_l = word.lower()
     if custom_ipa and word_l in custom_ipa:
         # Strip surrounding slashes in case the user stored them (e.g. /valʒɑ̃/)
-        return [custom_ipa[word_l].strip('/')]
+        return [custom_ipa[word_l].strip('/').replace('ː', '')]
     if word_l in FUNCTION_WORDS:
         return FUNCTION_WORDS[word_l].copy()
 
@@ -911,12 +934,16 @@ class Song:
     custom_ipa: dict = field(default_factory=dict)
     pron_choices: dict = field(default_factory=dict)  # word -> preferred pron index
     dismissed_tips: set = field(default_factory=set)  # words whose inline hint is dismissed
+    style: str = 'classical'  # 'classical' | 'mt_ccm'
+    sustained_words: set = field(default_factory=set)  # words marked as sustained
 
     def to_dict(self):
         return {'name': self.name, 'lyrics': self.lyrics,
                 'custom_ipa': dict(self.custom_ipa),
                 'pron_choices': dict(self.pron_choices),
-                'dismissed_tips': list(self.dismissed_tips)}
+                'dismissed_tips': list(self.dismissed_tips),
+                'style': self.style,
+                'sustained_words': list(self.sustained_words)}
 
     @classmethod
     def from_dict(cls, d):
@@ -924,7 +951,9 @@ class Song:
                    lyrics=d.get('lyrics', ''),
                    custom_ipa=dict(d.get('custom_ipa', {})),
                    pron_choices=dict(d.get('pron_choices', {})),
-                   dismissed_tips=set(d.get('dismissed_tips', [])))
+                   dismissed_tips=set(d.get('dismissed_tips', [])),
+                   style=d.get('style', 'classical'),
+                   sustained_words=set(d.get('sustained_words', [])))
 
 
 class SongStore:
@@ -1271,6 +1300,7 @@ class LyricsEditor(QTextEdit):
     word_ipa_requested = pyqtSignal(str)
     content_changed = pyqtSignal()
     annotation_dismissed = pyqtSignal(str)   # word_lower
+    word_sustain_toggled = pyqtSignal(str)    # word_lower
 
     def __init__(self):
         super().__init__()
@@ -1357,6 +1387,11 @@ class LyricsEditor(QTextEdit):
             da = menu.addAction(f'Dismiss hint for "{ann.word}"')
             da.triggered.connect(
                 lambda _, w=ann.word_lower: self.annotation_dismissed.emit(w))
+        if word:
+            menu.addSeparator()
+            sa = menu.addAction(f'Toggle sustained note on "{word}"')
+            sa.triggered.connect(
+                lambda _, w=word.lower(): self.word_sustain_toggled.emit(w))
         menu.exec_(event.globalPos())
 
     def line_text(self, block_number: int) -> str:
@@ -1518,6 +1553,11 @@ class ArticulationCard(QFrame):
         self.stress_warning.setWordWrap(True)
         self.stress_warning.setVisible(False)
 
+        self.sustained_label = QLabel('')
+        self.sustained_label.setObjectName('LegatoTip')
+        self.sustained_label.setWordWrap(True)
+        self.sustained_label.setVisible(False)
+
         self.section_header = QLabel('MODIFICATION AT HIGH PITCH')
         self.section_header.setObjectName('PanelTitle')
         self.section_caption = QLabel('')
@@ -1544,6 +1584,7 @@ class ArticulationCard(QFrame):
         layout.addWidget(self.brightness_bar)
         layout.addWidget(self.notes)
         layout.addWidget(self.stress_warning)
+        layout.addWidget(self.sustained_label)
         layout.addSpacing(_scale(10))
         layout.addWidget(self.section_header)
         layout.addWidget(self.section_caption)
@@ -1570,6 +1611,7 @@ class ArticulationCard(QFrame):
         self.notes.setText('')
         self.brightness_bar.set_brightness(None)
         self.set_stress_warning('')
+        self.sustained_label.setVisible(False)
         self.section_header.setText('')
         self.section_caption.setText('')
         self._clear_ladder()
@@ -2008,6 +2050,34 @@ class AnalysisPanel(QWidget):
             if item.widget():
                 item.widget().deleteLater()
 
+    def _show_sustained_tips(self, is_sustained: bool, vowel: Optional[str]):
+        """Show or hide sustained-note pedagogy in the articulation card."""
+        if not is_sustained or vowel is None:
+            self.card.sustained_label.setVisible(False)
+            return
+        tips = []
+        if vowel in ('i', 'y'):
+            tips.append('Sustained /i/ or /y/ — risk of thinning. '
+                        'Keep internal pharyngeal space open; resist spreading the lips too wide.')
+        elif vowel in ('u', 'ʊ'):
+            tips.append('Sustained /u/ — risk of locking. '
+                        'Open the lip circle slightly as pitch rises; '
+                        'pursing tightens resonance instead of freeing it.')
+        elif vowel in ('æ',):
+            tips.append('Sustained /æ/ — risk of pinching at height. '
+                        'Classical: relax toward /ɛ/. '
+                        'Belt/MT: keep the brightness but release jaw tension.')
+        if vowel not in ('ə', 'ɔ', 'ɑ', 'æ'):
+            tips.append('Vibrato: aim for a natural oscillation centred on '
+                        'the written pitch. '
+                        'If the note is marked straight (non-vibrato), '
+                        'keep the larynx stable and support steady sub-glottal pressure.')
+        if not tips:
+            tips.append('Sustained note — keep vowel integrity throughout; '
+                        'resist letting the resonance drift as support fades.')
+        self.card.sustained_label.setText(chr(10).join(tips))
+        self.card.sustained_label.setVisible(True)
+
     def _on_speak(self):
         if not self._current_word or self._current_word == 'Click a word to begin':
             return
@@ -2231,6 +2301,7 @@ class MainWindow(QMainWindow):
         self.editor.word_ipa_requested.connect(self._on_word_ipa_requested)
         self.editor.content_changed.connect(self._on_lyrics_changed)
         self.editor.annotation_dismissed.connect(self._on_annotation_dismissed)
+        self.editor.word_sustain_toggled.connect(self._on_word_sustain_toggled)
 
         editor_container = QWidget()
         ec_layout = QVBoxLayout(editor_container)
@@ -2256,6 +2327,14 @@ class MainWindow(QMainWindow):
         self._update_hints_btn_label()
         lh_layout.addWidget(lyrics_title)
         lh_layout.addStretch()
+        self.style_btn = QToolButton()
+        self.style_btn.setObjectName('HintsToggle')
+        self.style_btn.setFixedHeight(_scale(22))
+        self.style_btn.setPopupMode(QToolButton.InstantPopup)
+        self.style_btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self._style_menu = self._build_style_menu()
+        self.style_btn.setMenu(self._style_menu)
+        lh_layout.addWidget(self.style_btn)
         lh_layout.addWidget(self.hints_btn)
         ec_layout.addWidget(lyrics_header)
         ec_layout.addWidget(self.editor, 1)
@@ -2286,11 +2365,6 @@ class MainWindow(QMainWindow):
         self.breath_label.setWordWrap(True)
         self.breath_label.setVisible(False)
         ec_layout.addWidget(self.breath_label)
-        self.sibilance_label = QLabel('')
-        self.sibilance_label.setObjectName('ChiaroscuroTip')
-        self.sibilance_label.setWordWrap(True)
-        self.sibilance_label.setVisible(False)
-        ec_layout.addWidget(self.sibilance_label)
 
         self.analysis = AnalysisPanel()
         self.analysis.play_requested.connect(self._play_vowel)
@@ -2381,6 +2455,7 @@ class MainWindow(QMainWindow):
         self.editor.blockSignals(False)
         self._pron_cache.clear()
         self._pron_index_cache = dict(song.pron_choices)
+        self._update_style_btn_label()
         self._annotation_timer.start()   # recompute hints after load
         self.analysis.show_word('Click a word to begin', [])
         self.trajectory.set_phrase([])
@@ -2509,8 +2584,12 @@ class MainWindow(QMainWindow):
                 between = line_text[m.end():matches[i + 1].start()]
                 if re.search(r'[,;:.!?]', between):
                     return None   # punctuation boundary — suppress legato
-                next_prons = self._cached_pronunciations(matches[i + 1].group())
-                return next_prons[0] if next_prons else None
+                nw = matches[i + 1].group()
+                next_prons = self._context_aware_pronunciations(nw, None)
+                if not next_prons:
+                    return None
+                preferred = self._pron_index_cache.get(nw.lower(), 0)
+                return next_prons[min(preferred, len(next_prons) - 1)]
         return None
 
 
@@ -2529,6 +2608,48 @@ class MainWindow(QMainWindow):
         'approx':      'Approximant exits',
         'fricative':   'Fricative exits',
     }
+
+    def _build_style_menu(self) -> QMenu:
+        menu = QMenu(self)
+        self._act_style_classical = QAction('Classical / Legit', menu)
+        self._act_style_classical.setCheckable(True)
+        self._act_style_classical.triggered.connect(
+            lambda: self._on_style_changed('classical'))
+        menu.addAction(self._act_style_classical)
+        self._act_style_mt = QAction('MT / CCM / Pop', menu)
+        self._act_style_mt.setCheckable(True)
+        self._act_style_mt.triggered.connect(
+            lambda: self._on_style_changed('mt_ccm'))
+        menu.addAction(self._act_style_mt)
+        return menu
+
+    def _update_style_btn_label(self):
+        style = self.active_song.style if hasattr(self, 'songs') else 'classical'
+        if style == 'mt_ccm':
+            self.style_btn.setText('MT/CCM')
+            if hasattr(self, '_act_style_mt'):
+                self._act_style_mt.setChecked(True)
+                self._act_style_classical.setChecked(False)
+        else:
+            self.style_btn.setText('CLASSICAL')
+            if hasattr(self, '_act_style_classical'):
+                self._act_style_classical.setChecked(True)
+                self._act_style_mt.setChecked(False)
+
+    def _on_style_changed(self, style: str):
+        self.active_song.style = style
+        self._update_style_btn_label()
+        self._schedule_save()
+        self._compute_annotations()
+        # Rerun analysis panel tips for current word if any
+        word = self.analysis.word_label.text()
+        if word and word != 'Click a word to begin':
+            prons = self._context_aware_pronunciations(word, self._get_next_word_ipa(
+                self.editor.line_text(self._current_block_number), word)
+                if self._current_block_number >= 0 else None)
+            preferred = self._pron_index_cache.get(word.lower(), 0)
+            if prons:
+                self.analysis._update_word_tips(prons[min(preferred, len(prons)-1)])
 
     def _build_hints_menu(self) -> QMenu:
         menu = QMenu(self)
@@ -2615,6 +2736,7 @@ class MainWindow(QMainWindow):
             return
         doc = self.editor.document()
         dismissed = self.active_song.dismissed_tips
+        song_style = getattr(self.active_song, 'style', 'classical')
         annotations = []
 
         for block_num in range(doc.blockCount()):
@@ -2646,9 +2768,11 @@ class MainWindow(QMainWindow):
                             abs_start=block.position() + m.start(),
                             abs_end=block.position() + m.end(),
                             tip_type='glottal',
-                            tip_text=('Phrase-initial glottal \u2014 this phrase opens on a vowel. '
-                                      'Use a clean balanced onset: let the breath flow a split-second '
-                                      'before the tone. Avoid a glottal strike (colpo di glottide).'),
+                            tip_text=('Phrase-initial vowel \u2014 if you intend a glottal attack here '
+                                      'for dramatic effect, that is a valid choice. '
+                                      'If not, use a clean balanced onset (appoggio): '
+                                      'let the breath flow a split-second before the tone '
+                                      'to avoid an unintentional glottal strike.'),
                             color=ANN_COLOR['glottal'],
                             bg_color=ANN_BG['glottal'],
                         ))
@@ -2759,6 +2883,19 @@ class MainWindow(QMainWindow):
         self._word_annotations = annotations
         self.editor.set_annotations(annotations)
 
+    def _on_word_sustain_toggled(self, word_lower: str):
+        sw = self.active_song.sustained_words
+        if word_lower in sw:
+            sw.discard(word_lower)
+        else:
+            sw.add(word_lower)
+        self._schedule_save()
+        # Re-show analysis tips if this is the currently selected word
+        if self.analysis.word_label.text().lower() == word_lower:
+            self.analysis._show_sustained_tips(
+                word_lower in self.active_song.sustained_words,
+                self.analysis._current_vowel)
+
     def _on_word_clicked(self, word, block_number):
         self._current_block_number = block_number
         line = self.editor.line_text(block_number)
@@ -2766,6 +2903,9 @@ class MainWindow(QMainWindow):
         prons = self._context_aware_pronunciations(word, next_ipa)
         preferred = self._pron_index_cache.get(word.lower(), 0)
         self.analysis.show_word(word, prons, initial_index=preferred, next_ipa=next_ipa)
+        self.analysis._show_sustained_tips(
+            word.lower() in self.active_song.sustained_words,
+            self.analysis._current_vowel)
         self._update_trajectory(line)
 
     def _cached_pronunciations(self, word):
@@ -2807,51 +2947,41 @@ class MainWindow(QMainWindow):
         self._update_breath_and_sibilance(line_text)
 
     def _update_breath_and_sibilance(self, line_text: str):
-        """Scan the raw line IPA for unvoiced density and sibilant clusters."""
+        """Scan line IPA for unvoiced consonant density (breath leak).
+        Uses the same while-loop affricate-aware tokenizer as ipa_trailing_consonants
+        so tʃ/dʒ are counted as one phone, not double- or triple-counted.
+        """
         matches = list(WORD_RE.finditer(line_text))
         all_phones = []
         for m in matches:
             prons = self._cached_pronunciations(m.group())
-            if prons:
-                preferred = self._pron_index_cache.get(m.group().lower(), 0)
-                pron = prons[min(preferred, len(prons) - 1)]
-                # Collect all consonant tokens from this pron
-                for ch in pron:
-                    if ch in IPA_ALL_CONS:
-                        all_phones.append(ch)
-                # Also check digraphs
-                for digraph in ('tʃ', 'dʒ'):
-                    if digraph in pron:
-                        all_phones.append(digraph)
+            if not prons:
+                continue
+            preferred = self._pron_index_cache.get(m.group().lower(), 0)
+            pron = prons[min(preferred, len(prons) - 1)]
+            # Walk character by character; consume digraphs in one step
+            i = 0
+            while i < len(pron):
+                two = pron[i:i+2]
+                if two in ('tʃ', 'dʒ'):
+                    all_phones.append(two); i += 2
+                elif pron[i] in IPA_ALL_CONS:
+                    all_phones.append(pron[i]); i += 1
+                else:
+                    i += 1
 
-        # Breath leak
         if all_phones:
             unvoiced = sum(1 for p in all_phones if p in IPA_UNVOICED)
             ratio = unvoiced / len(all_phones)
             if ratio >= 0.55:
                 self.breath_label.setText(
-                    f'\u2697 High unvoiced consonant density ({ratio:.0%}) \u2014 '
-                    f'these open the glottis and dump air. '
-                    f'Pace your support actively; engage the intercostals '
-                    f'to maintain sub-glottal pressure throughout.')
+                    f'\u2697 High unvoiced density ({ratio:.0%} of consonants) \u2014 '
+                    f'these open the glottis and release air. '
+                    f'Engage breath support actively throughout; '
+                    f'resist letting sub-glottal pressure drop between words.')
                 self.breath_label.setVisible(True)
-            else:
-                self.breath_label.setVisible(False)
-        else:
-            self.breath_label.setVisible(False)
-
-        # Sibilance
-        sibilants = [p for p in all_phones if p in IPA_SIBILANT]
-        if len(sibilants) >= 3:
-            self.sibilance_label.setText(
-                f'\u26a0 Sibilant-heavy phrase ({len(sibilants)} sibilants) \u2014 '
-                f'on mic: soften and shorten each hiss; de-emphasize the '
-                f'tongue-tip contact to reduce piercing highs. '
-                f'In the hall: use them to cut through, but keep them forward '
-                f'and rhythmically precise.')
-            self.sibilance_label.setVisible(True)
-        else:
-            self.sibilance_label.setVisible(False)
+                return
+        self.breath_label.setVisible(False)
 
     def _update_chiaroscuro(self, items):
         """Show a brightness-balance warning for the current phrase."""
@@ -2992,12 +3122,39 @@ class MainWindow(QMainWindow):
         state = self.settings.value('windowState')
         if state:
             self.restoreState(state)
+        # Persist editor font size
+        self._editor_font_size = int(
+            self.settings.value('editorFontSize', self._editor_font_size))
+        self._apply_editor_font()
+        # Persist UI scale
+        self._ui_font_scale = float(
+            self.settings.value('uiFontScale', self._ui_font_scale))
+        self.setStyleSheet(build_style(_dpr(), self._ui_font_scale))
+        # Persist enabled hint types
+        saved_hints = self.settings.value('enabledHintTypes', None)
+        if saved_hints is not None:
+            # QSettings stores lists as QVariant; normalise to set of str
+            if isinstance(saved_hints, str):
+                saved_hints = [saved_hints]
+            self._enabled_hint_types = set(saved_hints)
+            # Sync menu checkmarks
+            if hasattr(self, '_hints_menu'):
+                for act in self._hints_menu.actions():
+                    if act.isCheckable() and act.text() in self._HINT_TYPE_LABELS.values():
+                        key = next((k for k, v in self._HINT_TYPE_LABELS.items()
+                                    if v == act.text()), None)
+                        if key:
+                            act.setChecked(key in self._enabled_hint_types)
+        self._update_hints_btn_label()
 
     def closeEvent(self, event):
         self.active_song.lyrics = self.editor.toPlainText()
         self._persist_songs()
         self.settings.setValue('geometry', self.saveGeometry())
         self.settings.setValue('windowState', self.saveState())
+        self.settings.setValue('editorFontSize', self._editor_font_size)
+        self.settings.setValue('uiFontScale', self._ui_font_scale)
+        self.settings.setValue('enabledHintTypes', list(self._enabled_hint_types))
         super().closeEvent(event)
 
 
